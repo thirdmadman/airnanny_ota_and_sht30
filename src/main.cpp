@@ -24,7 +24,7 @@ SHTSensor sht(SHTSensor::SHT3X);
 #define defaultAPSsid "ESP32"
 #define defaultWiFiSsid ""
 #define defaultWiFiPassword ""
-#define defaultlogDataUrl "https://google.com/logdata.php"
+#define defaultlogDataUrl "http://google.com/logdata.php"
 #define defaultuserId "0"
 #define defaultdevicePassword "admin"
 #define defaulttimezoneLocation "Europe/Samara"
@@ -48,11 +48,10 @@ bool isLastConnectionFailed = false;
 // config for dataLoger
 String logDataUrl = defaultlogDataUrl;
 String userId = defaultuserId;
-#define mesurmentsCount 10
-#define mesurmentInterval 1000
-#define mesurmentExecAvgInterval 1000 * 10
+#define mesurmentsForAVGCount 10
+#define mesurmentForAvgInterval 1000
 
-#define measurementsCycleInterval mesurmentExecAvgInterval + 10000
+#define measurementsSendInterval 30000
 
 // time
 String timezoneLocation = defaulttimezoneLocation;
@@ -64,9 +63,9 @@ int currentRunLevel = 0;
 
 bool wifiAPMode = false;
 
-// 0 
+// 0
 // 1 trying to connect to wifi and if failed start AP
-// 2 
+// 2
 // 3 conected to wifi sending data
 // 99 update
 
@@ -88,17 +87,23 @@ float randomFloat(float a, float b) {
 
 class SHT30Data {
    private:
-    float humidity[mesurmentsCount];
-    float temerature[mesurmentsCount];
-    unsigned long lastUpdate = 0;
+    float humidity[mesurmentsForAVGCount];
+    float temerature[mesurmentsForAVGCount];
+    unsigned long measurementsStartTime = 0;
+    unsigned long lastMeasurementTime = 0;
     unsigned long lastDataSendTime = 0;
-    int latNotEmptyHumidity = 0;
-    int latNotEmptyTemerature = 0;
+
+    int lastNotEmptyEntry = 0;
+
+    //int lastNotEmptyTemerature = 0;
+
+   public:
     void shiftData(float arr[], int size) {
         for (int i = 0; i < size - 1; i++) {
             arr[i] = arr[i + 1];
         }
     }
+
     float avgFromArray(float *array, int size) {
         float sum = 0;
         for (int i = 0; i < size; i++) {
@@ -119,57 +124,71 @@ class SHT30Data {
         return out;
     }
 
-   public:
-    void pushNewHumidity(float humidity) {
-        if (latNotEmptyHumidity < mesurmentsCount) {
-            this->humidity[latNotEmptyHumidity] = humidity;
-            latNotEmptyHumidity++;
+    void pushNewData(float temerature, float humidity) {
+        if (lastNotEmptyEntry < mesurmentsForAVGCount) {
+            this->temerature[lastNotEmptyEntry] = temerature;
+            this->humidity[lastNotEmptyEntry] = humidity;
+            lastNotEmptyEntry++;
         } else {
-            shiftData(this->humidity, mesurmentsCount);
-            this->humidity[mesurmentsCount - 1] = humidity;
+            shiftData(this->temerature, mesurmentsForAVGCount);
+            shiftData(this->humidity, mesurmentsForAVGCount);
+            this->temerature[mesurmentsForAVGCount - 1] = temerature;
+            this->humidity[mesurmentsForAVGCount - 1] = humidity;
         }
     }
-    void pushNewTemerature(float temerature) {
-        if (latNotEmptyTemerature < mesurmentsCount) {
-            this->temerature[latNotEmptyTemerature] = temerature;
-            latNotEmptyTemerature++;
-        } else {
-            shiftData(this->temerature, mesurmentsCount);
-            this->temerature[mesurmentsCount - 1] = temerature;
-        }
-    }
-    float getAverageHumidity() { return avgFromArray(humidity, mesurmentsCount); }
-    float getAverageTemerature() {
-        return avgFromArray(temerature, mesurmentsCount);
-    }
-    void updateCurretValues() {
-        if ((unsigned long)(millis() - lastUpdate) >= mesurmentInterval) {
-            if (sht.readSample()) {
-                pushNewHumidity(sht.getHumidity());
-                pushNewTemerature(sht.getTemperature());
-            } else {
-                Serial.print("[SHT3X] Error in readSample()\n");
-            }
 
-            // pushNewHumidity(randomFloat(0.0,99.9));
-            // pushNewTemerature(randomFloat(-40.0,80.0));
-            lastUpdate = millis();
+    float getAverageHumidity() {
+        return avgFromArray(humidity, mesurmentsForAVGCount);
+    }
+
+    float getAverageTemerature() {
+        return avgFromArray(temerature, mesurmentsForAVGCount);
+    }
+
+    void updateCurretValues(bool force = false) {
+        if (((unsigned long)(millis() - lastDataSendTime) >= measurementsSendInterval) || force) {
+            if (lastNotEmptyEntry == 0) {
+                measurementsStartTime = millis();
+            }
+            if ((lastNotEmptyEntry < mesurmentsForAVGCount) || force) {
+                if ((unsigned long)(millis() - lastMeasurementTime) >= mesurmentForAvgInterval) {
+                    if (sht.readSample()) {
+                        pushNewData(sht.getTemperature(), sht.getHumidity());
+                    } else {
+                        Serial.print("[SHT3X] Error in readSample()\n");
+                    }
+
+                    // pushNewHumidity(randomFloat(0.0,99.9));
+                    // pushNewTemerature(randomFloat(-40.0,80.0));
+                    lastMeasurementTime = millis();
+                }
+            }
         }
     }
+
     bool isNeedToSend() {
-        if ((unsigned long)(millis() - lastDataSendTime) >= (mesurmentExecAvgInterval + measurementsCycleInterval)) {
-            return true;
+        if ((unsigned long)(millis() - lastDataSendTime) >= (measurementsSendInterval)) {
+            if (lastNotEmptyEntry >= mesurmentsForAVGCount) {
+                return true;
+            }
         }
         return false;
     }
+
     void setLastDataSendTime(unsigned long millis) { lastDataSendTime = millis; }
 
     String getStringHumidity() {
-        return getStringFromArray(humidity, mesurmentsCount);
+        return getStringFromArray(humidity, mesurmentsForAVGCount);
     }
+
     String getStringTemerature() {
-        return getStringFromArray(temerature, mesurmentsCount);
+        return getStringFromArray(temerature, mesurmentsForAVGCount);
     }
+
+    void setLastNotEmptyEntry(int lastNotEmptyEntry) {
+        this->lastNotEmptyEntry = lastNotEmptyEntry;
+    }
+
 };
 
 SHT30Data sht30Data;
@@ -349,7 +368,7 @@ String sentData(String logData, String url) {
     String out = "";
     http.begin(client, url);
     http.addHeader("Content-Type", "application/json");
-    Serial.println("[HTTP] POST:");
+    Serial.println("[HTTP] sending POST reqest to " + url + " with JSON data: ");
     Serial.println(logData);
     int httpCode = http.POST(logData);
 
@@ -644,6 +663,7 @@ void setUpServer() {
                     // progress
                     Serial.printf("Update Success: %u\nRebooting...\n",
                                   upload.totalSize);
+                    ESP.restart();
                 } else {
                     Update.printError(Serial);
                 }
@@ -770,6 +790,7 @@ void loop() {
             }
             currentRunLevel = -1;
         }
+
         if (currentRunLevel == -1) {
             Serial.println("\n===Going for reboot===\n");
             ESP.restart();
@@ -778,6 +799,7 @@ void loop() {
             currentRunLevel = 1;
             loadConfig();
         } else if (currentRunLevel == 1) {
+            sht30Data.updateCurretValues(true);
             if ((WiFiSsid.length() >= 8)) {
                 if (isLastConnectionFailed) {
                     if ((((unsigned long)(millis() - APStarted) >= APModeDurationAfterConnectionFailed))) {
@@ -826,15 +848,14 @@ void loop() {
         } else if (currentRunLevel == 3) {
             if (sht30Data.isNeedToSend()) {
                 if (WiFi.status() == WL_CONNECTED) {
-                    sht30Data.setLastDataSendTime(millis());
                     waitForSync();
                     Timezone Russia;
                     Russia.setLocation(timezoneLocation);
                     String location = "";
                     location = sendGetRequest("http://ip-api.com/json/");
 
-                    StaticJsonDocument<1000> doc;
-                    StaticJsonDocument<1000> part;
+                    StaticJsonDocument<2000> doc;
+                    StaticJsonDocument<2000> part;
                     deserializeJson(part, location);
 
                     JsonObject root = doc.to<JsonObject>();
@@ -849,6 +870,8 @@ void loop() {
                     String output;
                     serializeJson(doc, output);
                     sentData(output, logDataUrl);
+                    sht30Data.setLastDataSendTime(millis());
+                    sht30Data.setLastNotEmptyEntry(0);
 
                 } else if (WiFi.status() != WL_CONNECTED) {
                     currentRunLevel = 1;
