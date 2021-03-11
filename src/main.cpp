@@ -91,7 +91,7 @@ class SHT30Data {
     float temerature[mesurmentsForAVGCount];
     unsigned long measurementsStartTime = 0;
     unsigned long lastMeasurementTime = 0;
-    unsigned long lastDataSendTime = 0;
+    unsigned long lastDataSendTime = 5000;
 
     int lastNotEmptyEntry = 0;
 
@@ -188,7 +188,6 @@ class SHT30Data {
     void setLastNotEmptyEntry(int lastNotEmptyEntry) {
         this->lastNotEmptyEntry = lastNotEmptyEntry;
     }
-
 };
 
 SHT30Data sht30Data;
@@ -691,12 +690,15 @@ void logConnectionData() {
 
 void setupForWifiAP(String ssid, String password) {
     loadConfig();
+    delay(1000);
+    WiFi.mode(WIFI_OFF);
+    delay(1000);
     WiFi.mode(WIFI_AP);
     Serial.println("Configuring access point...");
 
     if (WiFi.softAP(ssid.c_str(), password.c_str())) {
         Serial.println("Wait 100 ms for AP_START...");
-        delay(100);
+        // delay(100);
         // if(!WiFi.softAPConfig(ip, gateway, subnet)){
         //     Serial.println("AP Config Failed");
         // }
@@ -729,7 +731,7 @@ bool setupForWifiConection(String ssid, String password) {
                     Serial.print(".");
                     lastSerialLoggingUpdateTime = millis();
                 }
-                if ((millis() >= (apConnectionAttemptSmartTime + 60 * 1000)) || (WiFi.status() == WL_CONNECT_FAILED)) {
+                if ((millis() >= (apConnectionAttemptSmartTime + 20 * 1000)) || (WiFi.status() == WL_CONNECT_FAILED)) {
                     Serial.println("\n" + serialLoggingPrefix + "Connection to Wi-Fi by saved data attempt timeout or failed");
                     WiFi.disconnect();
                     out = false;
@@ -748,16 +750,11 @@ bool setupForWifiConection(String ssid, String password) {
 
 void setup() {
     pinMode(buttonReset, INPUT);
-    pinMode(buttonReset, INPUT_PULLUP);
-    pinMode(buttonReset, INPUT_PULLUP);
-
-    pinMode(buttonConfirm, INPUT);
     pinMode(buttonConfirm, INPUT_PULLUP);
 
-    pinMode(13, OUTPUT);
-    digitalWrite(13, HIGH);
+    // pinMode(13, OUTPUT);
+    // digitalWrite(13, HIGH);
 
-    ledcSetup(20, 4000, 8);
     Wire.begin();
     Serial.begin(115200);
     delay(3000);
@@ -774,7 +771,6 @@ void setup() {
 }
 
 void loop() {
-    // ledcWrite(20, 255);
     bReset.readState();
     bConfirm.readState();
     server.handleClient();
@@ -811,9 +807,6 @@ void loop() {
                             isLastConnectionFailed = false;
                         } else {
                             isLastConnectionFailed = true;
-                        }
-                    } else {
-                        if (wifiAPMode == false) {
                             setupForWifiAP(APSsid, APPassword);
                             wifiAPMode = true;
                             APStarted = millis();
